@@ -12,10 +12,14 @@ using System.Text;
 
 public class WickedClient
 {
+    public delegate void DelStr(string str);
+    public delegate void DelEmpty();
+    public DelStr _recvPacketUDP;
+    public DelStr _recvPacketTCP;
+    public DelEmpty _clientForceDisconnect;
     private IPEndPoint EP;
     private bool stopListenBool = false;
     private string P_MAC_UID;
-	private dynamic ClientEventClass;
 	private byte[] _bufferTCP;
     private byte[] _bufferUDP;
     Thread listenTCP;
@@ -40,11 +44,10 @@ public class WickedClient
         _clientSocketUDP.Close();
     }
 
-    public WickedClient (dynamic Events, ClientType protocol, string IP, int BufferSize, int port)
+    public WickedClient (ClientType protocol, string IP, int BufferSize, int port)
 	{
 		_bufferTCP = new byte[BufferSize];
         _bufferUDP = new byte[BufferSize];
-        ClientEventClass = Events;
         IPAddress IPA;
 
         if (IP == "localhost") { IPA = IPAddress.Loopback; } else { IPA = IPAddress.Parse(IP); }
@@ -84,16 +87,16 @@ public class WickedClient
 
                 var tokenSource = new CancellationTokenSource();
                 CancellationToken token = tokenSource.Token;
-                int timeOut = 5000; // 1000 ms
-
-                string answer;
-                var task = Task.Factory.StartNew(() => answer = listenIteration(), token);
+                int timeOut = 15000;
+                
+                var task = Task.Factory.StartNew(() => ReceiveResponseTCP(), token);
 
                 if (!task.Wait(timeOut, token))
                 {
                     goto SendUDP;
                 }
             }
+
             listenTCP = new Thread (BeginListenTCP);
             listenTCP.IsBackground = true;
             listenTCP.Start ();
@@ -138,11 +141,11 @@ public class WickedClient
 
 			if (text != null && stopListenBool == false)
 			{
-				try{ClientEventClass.recvPacketTCP (text);}catch{}
+				try{_recvPacketTCP (text);}catch{}
 			}
 			else if (stopListenBool == false)
 			{
-				try{ClientEventClass.clientForceDisconnect ();}catch{}
+				try{_clientForceDisconnect ();}catch{}
                 KillClient();
             }
 		}
@@ -152,12 +155,12 @@ public class WickedClient
 	{
         while (stopListenBool == false)
         {
-            string text = listenIteration();
-            if (text != null){ ClientEventClass.recvPacketUDP(text); }
+            string text = listenIterationUDP();
+            if (text != null){ _recvPacketUDP(text); }
         }
     }
 
-    private string listenIteration()
+    private string listenIterationUDP()
     {
         EndPoint ep = EP as EndPoint;
         int received = 0;

@@ -1,17 +1,20 @@
 using System;
 using System.Xml;
-using System.Collections;
-using System.Reflection;
-using System.Threading;
-using System.Text;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
+using System.Threading;
 using System.Collections.Generic;
-using System.IO;
 
 public class WickedServer
 {
-    private dynamic ServerEventClass;
+    public delegate void DelStrSoc(string str, Socket soc);
+    public delegate void DelSoc(Socket soc);
+    public DelStrSoc _recvPacketUDP;
+    public DelStrSoc _recvPacketTCP;
+    public DelSoc _clientConnect;
+    public DelSoc _clientUnidentified;
+    public DelSoc _clientForceDisconnect;
     private Socket _SocketTCP;
     private Socket _SocketUDP;
     private ClientList Clients = new ClientList();
@@ -28,11 +31,10 @@ public class WickedServer
 		return sockets;
 	}
 
-	public WickedServer (dynamic Events, ServerType type ,int TCPBufferSize, int port, int TCPBackLog)
+	public WickedServer (ServerType type ,int TCPBufferSize, int port, int TCPBackLog)
     {
         BUFFER_SIZE = TCPBufferSize + 73;
         _buffer = new byte[BUFFER_SIZE];
-        ServerEventClass = Events;
 
         if (type == ServerType.TCP)
 		{
@@ -72,7 +74,6 @@ public class WickedServer
             }
 
             _SocketUDP.SendTo(buffer, ep);
-            //udpServer.Send(buffer, buffer.Length, EP);
 		}
 	}
 
@@ -138,7 +139,7 @@ public class WickedServer
                         {
                             if (xDoc.DocumentElement.SelectSingleNode("UID").InnerXml == c.getID())
                             {
-                                try { ServerEventClass.recvPacketUDP(System.Web.HttpUtility.HtmlDecode(xDoc.SelectSingleNode("Data/MES").InnerXml), c.getSocket()); } catch (MethodAccessException) { }
+                                try { _recvPacketUDP(System.Web.HttpUtility.HtmlDecode(xDoc.SelectSingleNode("Data/MES").InnerXml), c.getSocket()); } catch (NullReferenceException) { }
                                 break;
                             }
                         }
@@ -153,9 +154,16 @@ public class WickedServer
                         {
                             if (xDoc.DocumentElement.SelectSingleNode("UID").InnerXml == c.getID())
                             {
-                                c.setEP(recvEP);
-                                byte[] buffer = new byte[0];
-                                _SocketUDP.SendTo(buffer, recvEP);
+                                byte[] buffer = new byte[1];
+                                c.getSocket().Send(buffer, 0, buffer.Length, SocketFlags.None);
+
+                                if (c.VerifiedUDP() == false)
+                                {
+                                    c.verifyUDP();
+                                    c.setEP(recvEP);
+                                    try { _clientConnect(c.getSocket()); } catch (NullReferenceException) { }
+                                }
+
                                 break;
                             }
                         }
@@ -173,15 +181,21 @@ public class WickedServer
                     {
                         if (xDoc.SelectSingleNode("Data/UID").InnerText == c.getID())
                         {
-                            try { ServerEventClass.clientUnidentified(c.getSocket()); } catch { uni = false; }
+                            try { _clientUnidentified(c.getSocket()); } catch (NullReferenceException) { uni = false; }
                         }
                     }
-                    catch (NullReferenceException) { Console.WriteLine(text); }
+                    catch (NullReferenceException) {}
                 }
-                //if ()
-                //{
-
-                //}
+                if (uni == false)
+                {
+                    foreach (ClientData c in Clients.getClients())
+                    {
+                        if (c.getEP() == recvEP)
+                        {
+                            try { _clientUnidentified(c.getSocket()); } catch (NullReferenceException) { break; }
+                        }
+                    }
+                }
             }
         }
 	}
@@ -203,8 +217,6 @@ public class WickedServer
 
         Clients.addClient(client);
 
-        try { ServerEventClass.clientConnect(socket); } catch { }
-
         socket.BeginReceive(_buffer, 0, BUFFER_SIZE, SocketFlags.None, ReceiveCallback, socket);
         _SocketTCP.BeginAccept(AcceptCallback, null);
     }
@@ -224,6 +236,7 @@ public class WickedServer
             {
                 if (client.getSocket() == current)
                 {
+                    try { _clientForceDisconnect(current); } catch (NullReferenceException) { }
                     current.Close(); // Dont shutdown because the socket may be disposed and its disconnected anyway
                     try { current.Shutdown(SocketShutdown.Both); } catch { }
 
@@ -282,12 +295,12 @@ public class WickedServer
             }
             else if (xDoc.SelectSingleNode("Data/Purpose").InnerText == "MES" && xDoc.SelectSingleNode("Data/UID").InnerText == currentCD.getID())
             {
-                try { ServerEventClass.recvPacketTCP(System.Web.HttpUtility.HtmlDecode(xDoc.SelectSingleNode("Data/MES").InnerXml), current); } catch { }
+                try { _recvPacketTCP(System.Web.HttpUtility.HtmlDecode(xDoc.SelectSingleNode("Data/MES").InnerXml), current); } catch (NullReferenceException) { }
             }
             else
             {
                 clientIdentified = false;
-                try { ServerEventClass.clientUnidentified(current); } catch { }
+                try { _clientUnidentified(current); } catch (NullReferenceException) { }
                 closeClientSocket(current);
             }
 
@@ -307,7 +320,7 @@ public class WickedServer
                             {
                                 if (client.getSocket() == current)
                                 {
-                                    try { ServerEventClass.clientForceDisconnect(current); } catch { }
+                                    try { _clientForceDisconnect(current); } catch (NullReferenceException) { }
 
                                     current.Close(); // Dont shutdown because the socket may be disposed and its disconnected anyway
                                     try { current.Shutdown(SocketShutdown.Both); } catch { }
@@ -335,7 +348,7 @@ public class WickedServer
         }
         else
         {
-            try { ServerEventClass.clientUnidentified(current); } catch { }
+            try { _clientUnidentified(current); } catch (NullReferenceException) { }
             closeClientSocket(current);
         }
 	}
